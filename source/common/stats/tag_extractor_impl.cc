@@ -26,7 +26,7 @@ bool regexStartsWithDot(absl::string_view regex) {
 TagExtractorImpl::TagExtractorImpl(const std::string& name, const std::string& regex,
                                    const std::string& substr)
     : name_(name), prefix_(std::string(extractRegexPrefix(regex))), substr_(substr),
-      regex_(Regex::Utility::parseStdRegex(regex)) {}
+      regex_(Regex::Utility::parseGoogleReRegex(regex)) {}
 
 std::string TagExtractorImpl::extractRegexPrefix(absl::string_view regex) {
   std::string prefix;
@@ -75,28 +75,30 @@ bool TagExtractorImpl::extractTag(absl::string_view stat_name, std::vector<Tag>&
     return false;
   }
 
-  std::match_results<absl::string_view::iterator> match;
-  // The regex must match and contain one or more subexpressions (all after the first are ignored).
-  if (std::regex_search<absl::string_view::iterator>(stat_name.begin(), stat_name.end(), match,
-                                                     regex_) &&
-      match.size() > 1) {
+  const re2::StringPiece name(stat_name.data(), stat_name.length());
+  re2::StringPiece matches[2];
+  const int num_groups = regex_->NumberOfCapturingGroups();
+
+  // The regex must match and contain one or more subexpressions (all after the second are ignored).
+  if ((num_groups == 1 && re2::RE2::PartialMatch(name, *regex_, &matches[0])) ||
+      re2::RE2::PartialMatch(name, *regex_, &matches[0], &matches[1])) {
     // remove_subexpr is the first submatch. It represents the portion of the string to be removed.
-    const auto& remove_subexpr = match[1];
+    const auto& remove_subexpr = matches[0];
 
     // value_subexpr is the optional second submatch. It is usually inside the first submatch
     // (remove_subexpr) to allow the expression to strip off extra characters that should be removed
     // from the string but also not necessary in the tag value ("." for example). If there is no
     // second submatch, then the value_subexpr is the same as the remove_subexpr.
-    const auto& value_subexpr = match.size() > 2 ? match[2] : remove_subexpr;
+    const auto& value_subexpr = num_groups > 1 ? matches[1] : remove_subexpr;
 
     tags.emplace_back();
     Tag& tag = tags.back();
     tag.name_ = name_;
-    tag.value_ = value_subexpr.str();
+    tag.value_ = value_subexpr.ToString();
 
     // Determines which characters to remove from stat_name to elide remove_subexpr.
-    std::string::size_type start = remove_subexpr.first - stat_name.begin();
-    std::string::size_type end = remove_subexpr.second - stat_name.begin();
+    std::string::size_type start = remove_subexpr.begin() - stat_name.begin();
+    std::string::size_type end = start + remove_subexpr.length();
     remove_characters.insert(start, end);
     PERF_RECORD(perf, "re-match", name_);
     return true;

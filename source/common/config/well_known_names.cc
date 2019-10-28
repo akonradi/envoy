@@ -30,17 +30,15 @@ TagNameValues::TagNameValues() {
   addRegex(RESPONSE_CODE_CLASS, "_rq_(\\d)xx$", "_rq_");
 
   // http.[<stat_prefix>.]dynamodb.table.[<table_name>.]capacity.[<operation_name>.](__partition_id=<last_seven_characters_from_partition_id>)
-  addRegex(DYNAMO_PARTITION_ID,
-           "^http(?=\\.).*?\\.dynamodb\\.table(?=\\.).*?\\."
-           "capacity(?=\\.).*?(\\.__partition_id=(\\w{7}))$",
-           ".dynamodb.table.");
+  addRegex(DYNAMO_PARTITION_ID, "^http\\.(?:.*?\\.)?dynamodb\\.table\\.(?:.*?\\.)?capacity\\.(?:.*?"
+                                "\\.)?(__partition_id=(\\w{7}))$.dynamodb.table.");
 
   // http.[<stat_prefix>.]dynamodb.operation.(<operation_name>.)<base_stat> or
   // http.[<stat_prefix>.]dynamodb.table.[<table_name>.]capacity.(<operation_name>.)[<partition_id>]
   addRegex(DYNAMO_OPERATION,
-           "^http(?=\\.).*?\\.dynamodb.(?:operation|table(?="
-           "\\.).*?\\.capacity)(\\.(.*?))(?:\\.|$)",
+           "^http\\.(?:.*?\\.)?dynamodb.(?:operation|table(?:\\..*?)?\\.capacity)(\\.(.*?))(?:\\.|$)",
            ".dynamodb.");
+
 
   // mongo.[<stat_prefix>.]collection.[<collection>.]callsite.(<callsite>.)query.<base_stat>
   addRegex(MONGO_CALLSITE,

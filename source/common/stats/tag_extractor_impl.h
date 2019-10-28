@@ -1,12 +1,12 @@
 #pragma once
 
 #include <cstdint>
-#include <regex>
 #include <string>
 
 #include "envoy/stats/tag_extractor.h"
 
 #include "absl/strings/string_view.h"
+#include "re2/re2.h"
 
 namespace Envoy {
 namespace Stats {
@@ -50,7 +50,7 @@ private:
   const std::string name_;
   const std::string prefix_;
   const std::string substr_;
-  const std::regex regex_;
+  const std::unique_ptr<const re2::RE2> regex_;
 };
 
 } // namespace Stats

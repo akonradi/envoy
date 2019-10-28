@@ -6,6 +6,8 @@
 #include "envoy/common/regex.h"
 #include "envoy/type/matcher/regex.pb.h"
 
+#include "re2/re2.h"
+
 namespace Envoy {
 namespace Regex {
 
@@ -23,6 +25,14 @@ public:
    */
   static std::regex parseStdRegex(const std::string& regex,
                                   std::regex::flag_type flags = std::regex::optimize);
+  /**
+   * Constructs a re2::RE2 instance, converting any initialization error into an EnvoyException.
+   * @param regex std::string containing the regular expression to parse.
+   * @return re2::RE2 constructed from regex
+   * @throw EnvoyException if the regex string is invalid.
+   */
+  static std::unique_ptr<re2::RE2>
+  parseGoogleReRegex(const std::string& regex);
 
   /**
    * Construct an std::regex compiled regex matcher.

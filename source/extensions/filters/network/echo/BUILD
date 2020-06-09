@@ -1,4 +1,8 @@
 load(
+    "@rust_cxx//tools/bazel:rust.bzl",
+    "rust_library",
+)
+load(
     "//bazel:envoy_build_system.bzl",
     "envoy_cc_extension",
     "envoy_cc_library",
@@ -12,11 +16,43 @@ licenses(["notice"])  # Apache 2
 
 envoy_package()
 
+rust_library(
+    name = "echo_rs",
+    srcs = ["echo.rs"],
+    deps = [
+        ":echo_rs_cxx",
+        "@rust_cxx//:cxx",
+    ],
+)
+
+genrule(
+    name = "echo_cxx_header_gen",
+    srcs = ["echo.rs"],
+    outs = ["echo_cxx.h"],
+    cmd = "cxxbridge $< --header > $@",
+)
+
+genrule(
+    name = "echo_cxx_srcs_gen",
+    srcs = ["echo.rs"],
+    outs = ["echo_cxx.cc"],
+    cmd = "cxxbridge $< > $@",
+)
+
+cc_library(
+    name = "echo_rs_cxx",
+    srcs = ["echo_cxx.cc"],
+    hdrs = ["echo_cxx.h"],
+    deps = [
+    ],
+)
+
 envoy_cc_library(
     name = "echo",
     srcs = ["echo.cc"],
     hdrs = ["echo.h"],
     deps = [
+        ":echo_rs_cxx",
         "//include/envoy/buffer:buffer_interface",
         "//include/envoy/network:connection_interface",
         "//include/envoy/network:filter_interface",

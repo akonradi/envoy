@@ -1,5 +1,7 @@
 load("@rules_python//python:repositories.bzl", "py_repositories")
 load("@rules_python//python:pip.bzl", "pip3_import", "pip_repositories")
+load("@io_bazel_rules_rust//rust:repositories.bzl", "rust_repositories")
+load("@io_bazel_rules_rust//:workspace.bzl", "bazel_version")
 
 # Python dependencies.
 def _python_deps():
@@ -18,3 +20,5 @@ def _python_deps():
 # Envoy deps that rely on a first stage of dependency loading in envoy_dependencies().
 def envoy_dependencies_extra():
     _python_deps()
+    rust_repositories()
+    bazel_version(name = "bazel_version")

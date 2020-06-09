@@ -359,6 +359,12 @@ DEPENDENCY_REPOSITORIES = dict(
         urls = ["https://github.com/bazelbuild/rules_go/releases/download/v0.20.3/rules_go-v0.20.3.tar.gz"],
         use_category = ["build"],
     ),
+    io_bazel_rules_rust = dict(
+        sha256 = "b83154a58f95618e06845b774b079000e0c39830e185db4c7bf46e79896cb3a1",
+        urls = ["https://github.com/bazelbuild/rules_rust/archive/0deef6dd8180cd3bc610878558bb26921b4e8de1.tar.gz"],
+        strip_prefix = "rules_rust-0deef6dd8180cd3bc610878558bb26921b4e8de1",
+        use_category = ["build"],
+    ),
     rules_cc = dict(
         sha256 = "9d48151ea71b3e225adfb6867e6d2c7d0dce46cbdc8710d9a9a628574dfd40a0",
         strip_prefix = "rules_cc-818289e5613731ae410efb54218a4077fb9dbb03",
@@ -475,5 +481,11 @@ DEPENDENCY_REPOSITORIES = dict(
         strip_prefix = "kafka-python-2.0.0",
         urls = ["https://github.com/dpkp/kafka-python/archive/2.0.0.tar.gz"],
         use_category = ["test"],
+    ),
+    rust_cxx = dict(
+        sha256 = "c8f18833e9002c9e4856d82be4372d956ff44c30a767761264bb56c28a45b30f",
+        strip_prefix = "cxx-0.3.4",
+        urls = ["https://github.com/dtolnay/cxx/archive/0.3.4.tar.gz"],
+        use_category = ["build"],
     ),
 )

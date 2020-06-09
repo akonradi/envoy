@@ -193,6 +193,16 @@ def envoy_dependencies(skip_targets = []):
     _repository_impl("envoy_build_tools")
     _repository_impl("rules_cc")
 
+    http_archive(
+        name = "bazel_skylib",
+        sha256 = "9a737999532daca978a158f94e77e9af6a6a169709c0cee274f0a4c3359519bd",
+        strip_prefix = "bazel-skylib-1.0.0",
+        url = "https://github.com/bazelbuild/bazel-skylib/archive/1.0.0.tar.gz",
+    )
+
+    _repository_impl("io_bazel_rules_rust")
+    _repository_impl("rust_cxx")
+
     # Unconditional, since we use this only for compiler-agnostic fuzzing utils.
     _org_llvm_releases_compiler_rt()
 

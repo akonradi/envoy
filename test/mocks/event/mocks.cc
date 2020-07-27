@@ -31,8 +31,9 @@ MockDispatcher::~MockDispatcher() = default;
 
 MockTimer::MockTimer() {
   ON_CALL(*this, enableTimer(_, _))
-      .WillByDefault(Invoke([&](const std::chrono::milliseconds&, const ScopeTrackedObject* scope) {
+      .WillByDefault(Invoke([&](const std::chrono::milliseconds& deadline, const ScopeTrackedObject* scope) {
         enabled_ = true;
+        deadline_ = deadline;
         scope_ = scope;
       }));
   ON_CALL(*this, disableTimer()).WillByDefault(Assign(&enabled_, false));

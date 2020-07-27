@@ -169,6 +169,7 @@ public:
   MockDispatcher* dispatcher_{};
   const ScopeTrackedObject* scope_{};
   bool enabled_{};
+  std::chrono::milliseconds deadline_{};
 
 private:
   Event::TimerCb callback_;

@@ -19,10 +19,17 @@ def generateCompilationDatabase(args):
       "--remote_download_outputs=all",
   ]
 
+  if args.exclude_manual:
+    extra_targets = []
+  else:
+    extra_targets = subprocess.check_output(
+        ["bazel", "query", "let targets = set("] + args.bazel_targets +
+        [") in attr(tags, 'manual', $targets)"]).decode().split("\n")
+
   subprocess.check_call(["bazel", "build"] + bazel_options + [
       "--aspects=@bazel_compdb//:aspects.bzl%compilation_database_aspect",
       "--output_groups=compdb_files,header_files"
-  ] + args.bazel_targets)
+  ] + args.bazel_targets + [t for t in extra_targets if t])
 
   execroot = subprocess.check_output(["bazel", "info", "execution_root"] +
                                      bazel_options).decode().strip()
@@ -93,6 +100,7 @@ if __name__ == "__main__":
   parser.add_argument('--include_external', action='store_true')
   parser.add_argument('--include_genfiles', action='store_true')
   parser.add_argument('--include_headers', action='store_true')
+  parser.add_argument('--exclude_manual', action='store_true')
   parser.add_argument('--vscode', action='store_true')
   parser.add_argument('bazel_targets',
                       nargs='*',

@@ -12,6 +12,7 @@
 #include "envoy/event/schedulable_cb.h"
 #include "envoy/event/signal.h"
 #include "envoy/event/timer.h"
+#include "envoy/event/scaled_timer_minimum.h"
 #include "envoy/filesystem/watcher.h"
 #include "envoy/network/connection.h"
 #include "envoy/network/connection_handler.h"
@@ -24,6 +25,8 @@
 #include "envoy/stats/stats_macros.h"
 #include "envoy/stream_info/stream_info.h"
 #include "envoy/thread/thread.h"
+
+#include "common/common/interval_value.h"
 
 namespace Envoy {
 namespace Event {
@@ -178,6 +181,21 @@ public:
    * @param cb supplies the callback to invoke when the timer fires.
    */
   virtual Event::TimerPtr createTimer(TimerCb cb) PURE;
+
+  /**
+   * Allocates a scaled timer whose minimum is determined by the given scaling rule.
+   * @param minimum supplies the rule for computing the minimum timeout for the timer
+   * @param callback supplies the callback to invoke when the timer fires.
+   */
+  virtual Event::TimerPtr createScaledTimer(Event::ScaledTimerMinimum minimum,
+                                            Event::TimerCb callback) PURE;
+
+  /**
+   * Sets the scale factor for all allocated scaled timers.
+   * @param scale_factor the scale factor to set; a value of 1 disables scaling, and 0 scales timers
+   * to their minimum value.
+   */
+  virtual void setTimerScaleFactor(UnitFloat scale_factor) PURE;
 
   /**
    * Allocates a schedulable callback. @see SchedulableCallback for docs on how to use the wrapped

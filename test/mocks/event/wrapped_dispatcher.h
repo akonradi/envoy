@@ -6,6 +6,7 @@
 #include <list>
 
 #include "envoy/event/dispatcher.h"
+#include "envoy/event/scaled_timer_minimum.h"
 
 namespace Envoy {
 namespace Event {
@@ -77,6 +78,14 @@ public:
   }
 
   TimerPtr createTimer(TimerCb cb) override { return impl_.createTimer(std::move(cb)); }
+
+  TimerPtr createScaledTimer(Event::ScaledTimerMinimum minimum, TimerCb callback) override {
+    return impl_.createScaledTimer(minimum, std::move(callback));
+  }
+
+  void setTimerScaleFactor(UnitFloat scale_factor) override {
+    impl_.setTimerScaleFactor(scale_factor);
+  }
 
   Event::SchedulableCallbackPtr createSchedulableCallback(std::function<void()> cb) override {
     return impl_.createSchedulableCallback(std::move(cb));

@@ -48,7 +48,8 @@ DispatcherImpl::DispatcherImpl(const std::string& name, Buffer::WatermarkFactory
       deferred_delete_cb_(base_scheduler_.createSchedulableCallback(
           [this]() -> void { clearDeferredDeleteList(); })),
       post_cb_(base_scheduler_.createSchedulableCallback([this]() -> void { runPostCallbacks(); })),
-      current_to_delete_(&to_delete_1_) {
+      current_to_delete_(&to_delete_1_),
+      scaled_timer_manager_(*this) {
   ASSERT(!name_.empty());
   FatalErrorHandler::registerFatalErrorHandler(*this);
   updateApproximateMonotonicTimeInternal();
@@ -189,6 +190,15 @@ Network::UdpListenerPtr DispatcherImpl::createUdpListener(Network::SocketSharedP
 TimerPtr DispatcherImpl::createTimer(TimerCb cb) {
   ASSERT(isThreadSafe());
   return createTimerInternal(cb);
+}
+
+TimerPtr DispatcherImpl::createScaledTimer(ScaledTimerMinimum minimum, TimerCb callback) {
+  ASSERT(isThreadSafe());
+  return scaled_timer_manager_.createTimer(minimum, callback);
+}
+
+void DispatcherImpl::setTimerScaleFactor(UnitFloat scale_factor) {
+  scaled_timer_manager_.setScaleFactor(scale_factor);
 }
 
 Event::SchedulableCallbackPtr DispatcherImpl::createSchedulableCallback(std::function<void()> cb) {

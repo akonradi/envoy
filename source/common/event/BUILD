@@ -33,6 +33,7 @@ envoy_cc_library(
         ":dispatcher_includes",
         ":libevent_scheduler_lib",
         ":real_time_system_lib",
+        ":scaled_range_timer_manager_lib",
         ":signal_lib",
         "//include/envoy/common:scope_tracker_interface",
         "//include/envoy/common:time_interface",
@@ -110,6 +111,7 @@ envoy_cc_library(
         "dispatcher_impl.h",
         "event_impl_base.h",
         "file_event_impl.h",
+        "scaled_range_timer_manager_impl.h",
         "schedulable_cb_impl.h",
     ],
     deps = [
@@ -119,6 +121,7 @@ envoy_cc_library(
         "//include/envoy/event:deferred_deletable",
         "//include/envoy/event:dispatcher_interface",
         "//include/envoy/event:file_event_interface",
+        "//include/envoy/event:scaled_range_timer_manager_interface",
         "//include/envoy/network:connection_handler_interface",
         "//source/common/common:minimal_logger_lib",
         "//source/common/common:thread_lib",

@@ -82,6 +82,12 @@ public:
     ASSERT(timer != nullptr);
     return timer;
   }
+  Event::TimerPtr createScaledTimer(Event::ScaledTimerMinimum minimum, Event::TimerCb cb) override {
+    auto timer = Event::TimerPtr{createScaledTimer_(minimum, cb)};
+    // Assert that the timer is not null to avoid confusing test failures down the line.
+    ASSERT(timer != nullptr);
+    return timer;
+  }
 
   Event::SchedulableCallbackPtr createSchedulableCallback(std::function<void()> cb) override {
     auto schedulable_cb = Event::SchedulableCallbackPtr{createSchedulableCallback_(cb)};
@@ -124,6 +130,8 @@ public:
   MOCK_METHOD(Network::UdpListener*, createUdpListener_,
               (Network::SocketSharedPtr socket, Network::UdpListenerCallbacks& cb));
   MOCK_METHOD(Timer*, createTimer_, (Event::TimerCb cb));
+  MOCK_METHOD(Timer*, createScaledTimer_, (Event::ScaledTimerMinimum, Event::TimerCb cb));
+  MOCK_METHOD(void, setTimerScaleFactor, (UnitFloat));
   MOCK_METHOD(SchedulableCallback*, createSchedulableCallback_, (std::function<void()> cb));
   MOCK_METHOD(void, deferredDelete_, (DeferredDeletable * to_delete));
   MOCK_METHOD(void, exit, ());

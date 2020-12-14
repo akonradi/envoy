@@ -18,6 +18,7 @@
 #include "common/common/thread.h"
 #include "common/event/libevent.h"
 #include "common/event/libevent_scheduler.h"
+#include "common/event/scaled_range_timer_manager_impl.h"
 #include "common/signal/fatal_error_handler.h"
 
 namespace Envoy {
@@ -68,6 +69,9 @@ public:
   Network::UdpListenerPtr createUdpListener(Network::SocketSharedPtr socket,
                                             Network::UdpListenerCallbacks& cb) override;
   TimerPtr createTimer(TimerCb cb) override;
+  Event::TimerPtr createScaledTimer(Event::ScaledTimerMinimum minimum,
+                                    Event::TimerCb callback) override;
+  void setTimerScaleFactor(UnitFloat scale_factor) override;
   Event::SchedulableCallbackPtr createSchedulableCallback(std::function<void()> cb) override;
   void deferredDelete(DeferredDeletablePtr&& to_delete) override;
   void exit() override;
@@ -155,6 +159,7 @@ private:
   bool deferred_deleting_{};
   MonotonicTime approximate_monotonic_time_;
   WatchdogRegistrationPtr watchdog_registration_;
+  ScaledRangeTimerManagerImpl scaled_timer_manager_;
 };
 
 } // namespace Event

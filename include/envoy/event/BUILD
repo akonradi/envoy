@@ -19,6 +19,7 @@ envoy_cc_library(
     deps = [
         ":deferred_deletable",
         ":file_event_interface",
+        ":scaled_timer_minimum",
         ":schedulable_cb_interface",
         ":signal_interface",
         "//include/envoy/common:scope_tracker_interface",

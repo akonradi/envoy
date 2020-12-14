@@ -120,11 +120,6 @@ public:
   // about overload state changes.
   void stop();
 
-protected:
-  // Factory for timer managers. This allows test-only subclasses to inject a mock implementation.
-  virtual Event::ScaledRangeTimerManagerPtr
-  createScaledRangeTimerManager(Event::Dispatcher& dispatcher) const;
-
 private:
   using FlushEpochId = uint64_t;
   class Resource : public ResourceMonitor::Callbacks {
@@ -165,6 +160,7 @@ private:
   Event::Dispatcher& dispatcher_;
   ThreadLocal::TypedSlot<ThreadLocalOverloadStateImpl> tls_;
   NamedOverloadActionSymbolTable action_symbol_table_;
+  const NamedOverloadActionSymbolTable::Symbol scale_timer_action_;
   const std::chrono::milliseconds refresh_interval_;
   Event::TimerPtr timer_;
   absl::node_hash_map<std::string, Resource> resources_;
@@ -177,6 +173,7 @@ private:
     FlushEpochId currentEpoch() const;
     void addStateUpdate(NamedOverloadActionSymbolTable::Symbol action, OverloadActionState state);
     void addCallback(ActionCallback* callback, OverloadActionState state);
+    void setTimerScaleFactor(UnitFloat scale_factor);
     void finishOneUpdate();
 
     void reset(uint64_t remaining_updates);
@@ -184,6 +181,7 @@ private:
     absl::flat_hash_map<NamedOverloadActionSymbolTable::Symbol, OverloadActionState>
     takeStateUpdates();
     absl::flat_hash_map<ActionCallback*, OverloadActionState> takeCallbacks();
+    absl::optional<UnitFloat> getTimerScaleFactor() const;
     bool noUpdatesRemaining() const;
 
   private:
@@ -191,6 +189,7 @@ private:
     uint64_t remaining_updates_ = 0;
     absl::flat_hash_map<NamedOverloadActionSymbolTable::Symbol, OverloadActionState> state_updates_;
     absl::flat_hash_map<ActionCallback*, OverloadActionState> callbacks_;
+    absl::optional<UnitFloat> timer_scale_factor_;
   };
 
   FlushEpochState current_update_epoch_;

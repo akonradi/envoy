@@ -27,13 +27,11 @@ namespace Server {
 class ThreadLocalOverloadStateImpl : public ThreadLocalOverloadState {
 public:
   ThreadLocalOverloadStateImpl(
-      Event::ScaledRangeTimerManagerPtr scaled_timer_manager,
-      const NamedOverloadActionSymbolTable& action_symbol_table,
+      Event::Dispatcher& dispatcher, const NamedOverloadActionSymbolTable& action_symbol_table,
       const absl::flat_hash_map<OverloadTimerType, Event::ScaledTimerMinimum>& timer_minimums)
-      : action_symbol_table_(action_symbol_table), timer_minimums_(timer_minimums),
-        actions_(action_symbol_table.size(), OverloadActionState(UnitFloat::min())),
-        scaled_timer_action_(action_symbol_table.lookup(OverloadActionNames::get().ReduceTimeouts)),
-        scaled_timer_manager_(std::move(scaled_timer_manager)) {}
+      : dispatcher_(dispatcher), action_symbol_table_(action_symbol_table),
+        timer_minimums_(timer_minimums),
+        actions_(action_symbol_table.size(), OverloadActionState(UnitFloat::min())) {}
 
   const OverloadActionState& getState(const std::string& action) override {
     if (const auto symbol = action_symbol_table_.lookup(action); symbol != absl::nullopt) {
@@ -42,35 +40,25 @@ public:
     return always_inactive_;
   }
 
-  Event::TimerPtr createScaledTimer(OverloadTimerType timer_type,
-                                    Event::TimerCb callback) override {
+  Event::ScaledTimerMinimum getRegisteredTimerMinimum(OverloadTimerType timer_type) const override {
     auto minimum_it = timer_minimums_.find(timer_type);
-    const Event::ScaledTimerMinimum minimum =
-        minimum_it != timer_minimums_.end()
-            ? minimum_it->second
-            : Event::ScaledTimerMinimum(Event::ScaledMinimum(UnitFloat::max()));
-    return scaled_timer_manager_->createTimer(minimum, std::move(callback));
-  }
-
-  Event::TimerPtr createScaledTimer(Event::ScaledTimerMinimum minimum,
-                                    Event::TimerCb callback) override {
-    return scaled_timer_manager_->createTimer(minimum, std::move(callback));
+    return minimum_it != timer_minimums_.end()
+               ? minimum_it->second
+               : Event::ScaledTimerMinimum(Event::ScaledMinimum(UnitFloat::max()));
   }
 
   void setState(NamedOverloadActionSymbolTable::Symbol action, OverloadActionState state) {
     actions_[action.index()] = state;
-    if (scaled_timer_action_.has_value() && scaled_timer_action_.value() == action) {
-      scaled_timer_manager_->setScaleFactor(UnitFloat(1 - state.value().value()));
-    }
   }
+
+  Event::Dispatcher& dispatcher() { return dispatcher_; }
 
 private:
   static const OverloadActionState always_inactive_;
+  Event::Dispatcher& dispatcher_;
   const NamedOverloadActionSymbolTable& action_symbol_table_;
   const absl::flat_hash_map<OverloadTimerType, Event::ScaledTimerMinimum>& timer_minimums_;
   std::vector<OverloadActionState> actions_;
-  absl::optional<NamedOverloadActionSymbolTable::Symbol> scaled_timer_action_;
-  const Event::ScaledRangeTimerManagerPtr scaled_timer_manager_;
 };
 
 const OverloadActionState ThreadLocalOverloadStateImpl::always_inactive_{UnitFloat::min()};
@@ -283,6 +271,7 @@ OverloadManagerImpl::OverloadManagerImpl(Event::Dispatcher& dispatcher, Stats::S
                                          ProtobufMessage::ValidationVisitor& validation_visitor,
                                          Api::Api& api)
     : started_(false), dispatcher_(dispatcher), tls_(slot_allocator),
+      scale_timer_action_(action_symbol_table_.get(OverloadActionNames::get().ReduceTimeouts)),
       refresh_interval_(
           std::chrono::milliseconds(PROTOBUF_GET_MS_OR_DEFAULT(config, refresh_interval, 1000))) {
   Configuration::ResourceMonitorFactoryContextImpl context(dispatcher, api, validation_visitor);
@@ -339,8 +328,8 @@ void OverloadManagerImpl::start() {
   started_ = true;
 
   tls_.set([this](Event::Dispatcher& dispatcher) {
-    return std::make_shared<ThreadLocalOverloadStateImpl>(createScaledRangeTimerManager(dispatcher),
-                                                          action_symbol_table_, timer_minimums_);
+    return std::make_shared<ThreadLocalOverloadStateImpl>(dispatcher, action_symbol_table_,
+                                                          timer_minimums_);
   });
 
   if (resources_.empty()) {
@@ -392,11 +381,6 @@ bool OverloadManagerImpl::registerForAction(const std::string& action,
 
 ThreadLocalOverloadState& OverloadManagerImpl::getThreadLocalOverloadState() { return *tls_; }
 
-Event::ScaledRangeTimerManagerPtr
-OverloadManagerImpl::createScaledRangeTimerManager(Event::Dispatcher& dispatcher) const {
-  return std::make_unique<Event::ScaledRangeTimerManagerImpl>(dispatcher);
-}
-
 void OverloadManagerImpl::updateResourcePressure(const std::string& resource, double pressure,
                                                  FlushEpochId flush_epoch) {
   auto [start, end] = resource_to_actions_.equal_range(resource);
@@ -426,6 +410,9 @@ void OverloadManagerImpl::updateResourcePressure(const std::string& resource, do
       std::for_each(callbacks_start, callbacks_end, [&](ActionToCallbackMap::value_type& cb_entry) {
         current_update_epoch_.addCallback(&cb_entry.second, state);
       });
+      if (action == scale_timer_action_) {
+        current_update_epoch_.setTimerScaleFactor(UnitFloat(1 - state.value().value()));
+      }
     }
   });
 
@@ -447,9 +434,14 @@ void OverloadManagerImpl::flushResourceUpdates() {
     auto shared_updates = std::make_shared<
         absl::flat_hash_map<NamedOverloadActionSymbolTable::Symbol, OverloadActionState>>(
         std::move(state_updates));
-    tls_.runOnAllThreads([updates = std::move(shared_updates)](OptRef<ThreadLocalOverloadStateImpl> overload_state) {
+    auto timer_scale_factor = current_update_epoch_.getTimerScaleFactor();
+    tls_.runOnAllThreads([updates = std::move(shared_updates),
+                          timer_scale_factor](OptRef<ThreadLocalOverloadStateImpl> overload_state) {
       for (const auto& [action, state] : *updates) {
         overload_state->setState(action, state);
+      }
+      if (timer_scale_factor.has_value()) {
+        overload_state->dispatcher().setTimerScaleFactor(timer_scale_factor.value());
       }
     });
   }
@@ -501,6 +493,9 @@ void OverloadManagerImpl::FlushEpochState::addCallback(ActionCallback* callback,
                                                        OverloadActionState state) {
   callbacks_.insert_or_assign(callback, state);
 }
+void OverloadManagerImpl::FlushEpochState::setTimerScaleFactor(UnitFloat scale_factor) {
+  timer_scale_factor_ = scale_factor;
+}
 void OverloadManagerImpl::FlushEpochState::finishOneUpdate() {
   ASSERT(remaining_updates_ > 0);
   --remaining_updates_;
@@ -523,6 +518,10 @@ OverloadManagerImpl::FlushEpochState::takeCallbacks() {
   absl::flat_hash_map<ActionCallback*, OverloadActionState> to_return;
   std::swap(to_return, callbacks_);
   return to_return;
+}
+
+absl::optional<UnitFloat> OverloadManagerImpl::FlushEpochState::getTimerScaleFactor() const {
+  return timer_scale_factor_;
 }
 
 bool OverloadManagerImpl::FlushEpochState::noUpdatesRemaining() const {

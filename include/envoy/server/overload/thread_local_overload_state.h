@@ -59,13 +59,9 @@ public:
   // Get a thread-local reference to the value for the given action key.
   virtual const OverloadActionState& getState(const std::string& action) PURE;
 
-  // Get a scaled timer whose minimum corresponds to the configured value for the given timer type.
-  virtual Event::TimerPtr createScaledTimer(OverloadTimerType timer_type,
-                                            Event::TimerCb callback) PURE;
-
-  // Get a scaled timer whose minimum is determined by the given scaling rule.
-  virtual Event::TimerPtr createScaledTimer(Event::ScaledTimerMinimum minimum,
-                                            Event::TimerCb callback) PURE;
+  // Returns the rule for computing the minimum value for the timer of the given type.
+  virtual Event::ScaledTimerMinimum
+  getRegisteredTimerMinimum(OverloadTimerType timer_type) const PURE;
 };
 
 } // namespace Server

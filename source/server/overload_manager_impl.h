@@ -172,11 +172,28 @@ private:
 
   absl::flat_hash_map<OverloadTimerType, Event::ScaledTimerMinimum> timer_minimums_;
 
-  absl::flat_hash_map<NamedOverloadActionSymbolTable::Symbol, OverloadActionState>
-      state_updates_to_flush_;
-  absl::flat_hash_map<ActionCallback*, OverloadActionState> callbacks_to_flush_;
-  FlushEpochId flush_epoch_ = 0;
-  uint64_t flush_awaiting_updates_ = 0;
+  class FlushEpochState {
+  public:
+    FlushEpochId currentEpoch() const;
+    void addStateUpdate(NamedOverloadActionSymbolTable::Symbol action, OverloadActionState state);
+    void addCallback(ActionCallback* callback, OverloadActionState state);
+    void finishOneUpdate();
+
+    void reset(uint64_t remaining_updates);
+
+    absl::flat_hash_map<NamedOverloadActionSymbolTable::Symbol, OverloadActionState>
+    takeStateUpdates();
+    absl::flat_hash_map<ActionCallback*, OverloadActionState> takeCallbacks();
+    bool noUpdatesRemaining() const;
+
+  private:
+    FlushEpochId current_epoch_;
+    uint64_t remaining_updates_ = 0;
+    absl::flat_hash_map<NamedOverloadActionSymbolTable::Symbol, OverloadActionState> state_updates_;
+    absl::flat_hash_map<ActionCallback*, OverloadActionState> callbacks_;
+  };
+
+  FlushEpochState current_update_epoch_;
 
   using ResourceToActionMap =
       std::unordered_multimap<std::string, NamedOverloadActionSymbolTable::Symbol>;

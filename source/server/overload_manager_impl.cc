@@ -353,11 +353,10 @@ void OverloadManagerImpl::start() {
 
     // Start a new flush epoch. If all resource updates complete before this callback runs, the last
     // resource update will call flushResourceUpdates to flush the whole batch early.
-    ++flush_epoch_;
-    flush_awaiting_updates_ = resources_.size();
+    current_update_epoch_.reset(resources_.size());
 
     for (auto& resource : resources_) {
-      resource.second.update(flush_epoch_);
+      resource.second.update(current_update_epoch_.currentEpoch());
     }
 
     timer_->enableTimer(refresh_interval_);
@@ -422,10 +421,10 @@ void OverloadManagerImpl::updateResourcePressure(const std::string& resource, do
       // even if resource 1 causes an action to have value A, and a later update to resource 2
       // causes the action to have value B, B would have been the result for whichever order the
       // updates to resources 1 and 2 came in.
-      state_updates_to_flush_.insert_or_assign(action, state);
+      current_update_epoch_.addStateUpdate(action, state);
       auto [callbacks_start, callbacks_end] = action_to_callbacks_.equal_range(action);
       std::for_each(callbacks_start, callbacks_end, [&](ActionToCallbackMap::value_type& cb_entry) {
-        callbacks_to_flush_.insert_or_assign(&cb_entry.second, state);
+        current_update_epoch_.addCallback(&cb_entry.second, state);
       });
     }
   });
@@ -435,31 +434,29 @@ void OverloadManagerImpl::updateResourcePressure(const std::string& resource, do
   // before each batch of updates, and even if a resource monitor performs a double update, or a
   // previous update callback is late, the logic in OverloadManager::Resource::update() will prevent
   // unexpected calls to this function.
-  ASSERT(flush_awaiting_updates_ > 0);
-  --flush_awaiting_updates_;
-  if (flush_epoch == flush_epoch_ && flush_awaiting_updates_ == 0) {
+  current_update_epoch_.finishOneUpdate();
+  if (current_update_epoch_.noUpdatesRemaining() &&
+      flush_epoch == current_update_epoch_.currentEpoch()) {
     flushResourceUpdates();
   }
 }
 
 void OverloadManagerImpl::flushResourceUpdates() {
-  if (!state_updates_to_flush_.empty()) {
+  auto state_updates = current_update_epoch_.takeStateUpdates();
+  if (!state_updates.empty()) {
     auto shared_updates = std::make_shared<
-        absl::flat_hash_map<NamedOverloadActionSymbolTable::Symbol, OverloadActionState>>();
-    std::swap(*shared_updates, state_updates_to_flush_);
-
-    tls_.runOnAllThreads(
-        [updates = std::move(shared_updates)](OptRef<ThreadLocalOverloadStateImpl> overload_state) {
-          for (const auto& [action, state] : *updates) {
-            overload_state->setState(action, state);
-          }
-        });
+        absl::flat_hash_map<NamedOverloadActionSymbolTable::Symbol, OverloadActionState>>(
+        std::move(state_updates));
+    tls_.runOnAllThreads([updates = std::move(shared_updates)](OptRef<ThreadLocalOverloadStateImpl> overload_state) {
+      for (const auto& [action, state] : *updates) {
+        overload_state->setState(action, state);
+      }
+    });
   }
 
-  for (const auto& [cb, state] : callbacks_to_flush_) {
+  for (const auto& [cb, state] : current_update_epoch_.takeCallbacks()) {
     cb->dispatcher_.post([cb = cb, state = state]() { cb->callback_(state); });
   }
-  callbacks_to_flush_.clear();
 }
 
 OverloadManagerImpl::Resource::Resource(const std::string& name, ResourceMonitorPtr monitor,
@@ -491,6 +488,45 @@ void OverloadManagerImpl::Resource::onFailure(const EnvoyException& error) {
   pending_update_ = false;
   ENVOY_LOG(info, "Failed to update resource {}: {}", name_, error.what());
   failed_updates_counter_.inc();
+}
+
+OverloadManagerImpl::FlushEpochId OverloadManagerImpl::FlushEpochState::currentEpoch() const {
+  return current_epoch_;
+}
+void OverloadManagerImpl::FlushEpochState::addStateUpdate(
+    NamedOverloadActionSymbolTable::Symbol action, OverloadActionState state) {
+  state_updates_.insert_or_assign(action, state);
+}
+void OverloadManagerImpl::FlushEpochState::addCallback(ActionCallback* callback,
+                                                       OverloadActionState state) {
+  callbacks_.insert_or_assign(callback, state);
+}
+void OverloadManagerImpl::FlushEpochState::finishOneUpdate() {
+  ASSERT(remaining_updates_ > 0);
+  --remaining_updates_;
+}
+
+void OverloadManagerImpl::FlushEpochState::reset(uint64_t new_remaining_updates) {
+  ++current_epoch_;
+  remaining_updates_ = new_remaining_updates;
+}
+
+absl::flat_hash_map<NamedOverloadActionSymbolTable::Symbol, OverloadActionState>
+OverloadManagerImpl::FlushEpochState::takeStateUpdates() {
+  absl::flat_hash_map<NamedOverloadActionSymbolTable::Symbol, OverloadActionState> to_return;
+  std::swap(to_return, state_updates_);
+  return to_return;
+}
+
+absl::flat_hash_map<OverloadManagerImpl::ActionCallback*, OverloadActionState>
+OverloadManagerImpl::FlushEpochState::takeCallbacks() {
+  absl::flat_hash_map<ActionCallback*, OverloadActionState> to_return;
+  std::swap(to_return, callbacks_);
+  return to_return;
+}
+
+bool OverloadManagerImpl::FlushEpochState::noUpdatesRemaining() const {
+  return remaining_updates_ == 0;
 }
 
 } // namespace Server

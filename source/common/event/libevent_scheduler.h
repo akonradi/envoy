@@ -56,7 +56,7 @@ namespace Event {
 // 1. Fd events
 // 2. Timers, FileEvent::activate and SchedulableCallback::scheduleCallbackNextIteration
 // 3. "Same-iteration" work items described above, including Event::Dispatcher::post callbacks
-class LibeventScheduler : public Scheduler, public CallbackScheduler {
+class LibeventScheduler : public BaseScheduler, public CallbackScheduler {
 public:
   using OnPrepareCallback = std::function<void()>;
   LibeventScheduler();

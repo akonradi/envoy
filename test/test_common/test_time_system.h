@@ -168,8 +168,8 @@ public:
     timeSystem().advanceTimeWaitImpl(duration);
   }
   SchedulerPtr createScheduler(Scheduler& base_scheduler,
-                               CallbackScheduler& cb_scheduler) override {
-    return timeSystem().createScheduler(base_scheduler, cb_scheduler);
+                               CallbackScheduler& cb_scheduler, Dispatcher& dispatcher) override {
+    return timeSystem().createScheduler(base_scheduler, cb_scheduler, dispatcher);
   }
   SystemTime systemTime() override { return timeSystem().systemTime(); }
   MonotonicTime monotonicTime() override { return timeSystem().monotonicTime(); }

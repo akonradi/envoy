@@ -60,6 +60,16 @@ public:
 
 using TimerPtr = std::unique_ptr<Timer>;
 
+class BaseScheduler {
+public:
+  virtual ~BaseScheduler() = default;
+
+  /**
+   * Creates a timer on the given dispatcher.
+   */
+  virtual TimerPtr createTimer(const TimerCb& cb, Dispatcher& dispatcher) PURE;
+};
+
 class Scheduler {
 public:
   virtual ~Scheduler() = default;
@@ -67,7 +77,7 @@ public:
   /**
    * Creates a timer.
    */
-  virtual TimerPtr createTimer(const TimerCb& cb, Dispatcher& dispatcher) PURE;
+  virtual TimerPtr createTimer(const TimerCb& cb) PURE;
 };
 
 using SchedulerPtr = std::unique_ptr<Scheduler>;
@@ -90,8 +100,8 @@ public:
    * Creates a timer factory. This indirection enables thread-local timer-queue management,
    * so servers can have a separate timer-factory in each thread.
    */
-  virtual SchedulerPtr createScheduler(Scheduler& base_scheduler,
-                                       CallbackScheduler& cb_scheduler) PURE;
+  virtual SchedulerPtr createScheduler(Scheduler& base_scheduler, CallbackScheduler& cb_scheduler,
+                                       Dispatcher& dispatcher) PURE;
 };
 
 } // namespace Event

@@ -106,7 +106,7 @@ private:
   // that the dog is touched periodically.
   class WatchdogRegistration {
   public:
-    WatchdogRegistration(const Server::WatchDogSharedPtr& watchdog, Scheduler& scheduler,
+    WatchdogRegistration(const Server::WatchDogSharedPtr& watchdog, BaseScheduler& scheduler,
                          std::chrono::milliseconds timer_interval, Dispatcher& dispatcher)
         : watchdog_(watchdog), timer_interval_(timer_interval) {
       touch_timer_ = scheduler.createTimer(

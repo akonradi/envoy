@@ -44,7 +44,7 @@ DispatcherImpl::DispatcherImpl(const std::string& name, Api::Api& api,
 DispatcherImpl::DispatcherImpl(const std::string& name, Buffer::WatermarkFactoryPtr&& factory,
                                Api::Api& api, Event::TimeSystem& time_system)
     : name_(name), api_(api), buffer_factory_(std::move(factory)),
-      scheduler_(time_system.createScheduler(base_scheduler_, base_scheduler_)),
+      scheduler_(time_system.createScheduler(base_scheduler_, base_scheduler_, *this)),
       deferred_delete_cb_(base_scheduler_.createSchedulableCallback(
           [this]() -> void { clearDeferredDeleteList(); })),
       post_cb_(base_scheduler_.createSchedulableCallback([this]() -> void { runPostCallbacks(); })),
@@ -214,8 +214,7 @@ TimerPtr DispatcherImpl::createTimerInternal(TimerCb cb) {
       [this, cb]() {
         touchWatchdog();
         cb();
-      },
-      *this);
+      });
 }
 
 void DispatcherImpl::deferredDelete(DeferredDeletablePtr&& to_delete) {

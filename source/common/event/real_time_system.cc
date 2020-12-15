@@ -11,19 +11,20 @@ namespace {
 
 class RealScheduler : public Scheduler {
 public:
-  RealScheduler(Scheduler& base_scheduler) : base_scheduler_(base_scheduler) {}
-  TimerPtr createTimer(const TimerCb& cb, Dispatcher& d) override {
-    return base_scheduler_.createTimer(cb, d);
-  };
+  RealScheduler(BaseScheduler& base_scheduler, Dispatcher& dispatcher)
+      : base_scheduler_(base_scheduler), dispatcher_(dispatcher) {}
+  TimerPtr createTimer(const TimerCb& cb) override { return base_scheduler_.createTimer(cb, dispatcher_); };
 
 private:
-  Scheduler& base_scheduler_;
+  BaseScheduler& base_scheduler_;
+  Dispatcher& dispatcher_;
 };
 
 } // namespace
 
-SchedulerPtr RealTimeSystem::createScheduler(Scheduler& base_scheduler, CallbackScheduler&) {
-  return std::make_unique<RealScheduler>(base_scheduler);
+SchedulerPtr RealTimeSystem::createScheduler(Scheduler& base_scheduler, CallbackScheduler&,
+                                             Dispatcher& d) {
+  return std::make_unique<RealScheduler>(base_scheduler, d);
 }
 
 } // namespace Event

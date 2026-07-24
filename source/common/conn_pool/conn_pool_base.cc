@@ -608,7 +608,10 @@ std::list<ActiveClientPtr>& ConnPoolImplBase::owningList(ActiveClient::State sta
 void ConnPoolImplBase::transitionActiveClientState(ActiveClient& client,
                                                    ActiveClient::State new_state) {
   const ActiveClient::State old_state = client.state();
-  const uint32_t prefix_limit = effectiveEagerPreconnectFloor();
+  // Maintain the prefix on the configured floor, not the runtime-gated effective floor, so its
+  // bookkeeping stays consistent while the guard is off; only selection (rotateReadyPrefix) honors
+  // the guard.
+  const uint32_t prefix_limit = host_->cluster().eagerPreconnectFloor();
 
   // Update the ready-client prefix before the client leaves `ready_clients_`, while its list
   // neighbors are still reachable.
@@ -820,9 +823,10 @@ void ConnPoolImplBase::onConnectionEvent(ActiveClient& client, absl::string_view
     }
 
     // A Ready client closing here bypasses transitionActiveClientState; update the ready-client
-    // prefix before it leaves `ready_clients_` (no-op if it wasn't a prefix member).
-    removeFromReadyPrefix(ready_clients_, ready_prefix_tail_, effectiveEagerPreconnectFloor(),
-                          client);
+    // prefix before it leaves `ready_clients_` (no-op if it wasn't a prefix member). Uses the
+    // configured floor for the same reason as transitionActiveClientState.
+    removeFromReadyPrefix(ready_clients_, ready_prefix_tail_,
+                          host_->cluster().eagerPreconnectFloor(), client);
     dispatcher_.deferredDelete(client.removeFromList(owningList(client.state())));
 
     // Maintain eager preconnect floor, if enabled.

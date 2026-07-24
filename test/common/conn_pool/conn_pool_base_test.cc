@@ -352,6 +352,56 @@ TEST_F(ConnPoolImplBaseTest, RoundRobinOnlyCoversReadyPrefix) {
   dispatcher_.clearDeferredDeleteList();
 }
 
+// A connection joins the ready set while the eager_preconnect_floor guard is off, then the guard
+// is re-enabled. The ready-client prefix must stay consistent across the flip: round-robin still
+// has to cover the prefix and skip ready clients outside it.
+TEST_F(ConnPoolImplBaseTest, RoundRobinAdaptsToReadySetChangeAcrossRuntimeGuardFlip) {
+  TestScopedRuntime scoped_runtime;
+  EXPECT_CALL(dispatcher_, createTimer_(_)).Times(AnyNumber());
+  EXPECT_CALL(pool_, instantiateActiveClient).Times(AnyNumber());
+  EXPECT_CALL(pool_, onPoolReady).Times(AnyNumber());
+  concurrent_streams_ = 100; // Connections stay Ready after streams attach.
+  ON_CALL(*cluster_, eagerPreconnectFloor).WillByDefault(Return(2));
+
+  // Create three connections; connect two with the guard on so the prefix is {clients_[1], [0]}.
+  scoped_runtime.mergeValues({{"envoy.reloadable_features.eager_preconnect_floor", "true"}});
+  while (clients_.size() < 3) {
+    ASSERT_TRUE(pool_.maybePreconnectImpl(1e9));
+  }
+  ASSERT_EQ(3, clients_.size());
+  clients_[0]->onEvent(Network::ConnectionEvent::Connected);
+  clients_[1]->onEvent(Network::ConnectionEvent::Connected);
+
+  // The third connection becomes ready while the guard is off -- a ready-set change during the
+  // off-window that the prefix bookkeeping must still track.
+  scoped_runtime.mergeValues({{"envoy.reloadable_features.eager_preconnect_floor", "false"}});
+  clients_[2]->onEvent(Network::ConnectionEvent::Connected);
+
+  // With the guard back on, round-robin must spread over the prefix {clients_[2], clients_[1]}
+  // (MRU front) and leave clients_[0], now outside the prefix, untouched.
+  scoped_runtime.mergeValues({{"envoy.reloadable_features.eager_preconnect_floor", "true"}});
+  for (int i = 0; i < 8; ++i) {
+    pool_.newStreamImpl(context_, /*can_send_early_data=*/false);
+  }
+  ASSERT_EQ(3, clients_.size()); // No new connections were created.
+  EXPECT_EQ(0u, clients_[0]->active_streams_);
+  const uint32_t s1 = clients_[1]->active_streams_;
+  const uint32_t s2 = clients_[2]->active_streams_;
+  EXPECT_EQ(8u, s1 + s2);
+  EXPECT_TRUE(s1 == s2 || s1 == s2 + 1 || s2 == s1 + 1);
+
+  // Complete all streams and drain so the pool is idle for teardown.
+  for (auto* c : clients_) {
+    const uint32_t n = c->active_streams_;
+    c->active_streams_ = 0;
+    for (uint32_t i = 0; i < n; ++i) {
+      pool_.onStreamClosed(*c, false);
+    }
+  }
+  pool_.drainConnectionsImpl(Envoy::ConnectionPool::DrainBehavior::DrainAndDelete);
+  dispatcher_.clearDeferredDeleteList();
+}
+
 TEST_F(ConnPoolImplBaseTest, DumpState) {
   std::stringstream out;
   pool_.dumpState(out, 0);

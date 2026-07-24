@@ -147,6 +147,11 @@ public:
   bool timed_out_{false};
   // TODO(danzh) remove this once http codec exposes the handshake state for h3.
   bool has_handshake_completed_{false};
+  // Whether this client is currently in the ready-client prefix (the round-robin set of the first
+  // eager_preconnect_floor ready clients). Maintained by the pool as ready clients are added and
+  // removed; only meaningful while the client is in `ready_clients_`. See
+  // ConnPoolImplBase::ready_prefix_tail_.
+  bool in_ready_prefix_{false};
 
 protected:
   // HTTP/3 subclass should override this.
@@ -379,6 +384,12 @@ protected:
   // Clients that are ready to handle additional streams.
   // All entries are in state Ready.
   std::list<ActiveClientPtr> ready_clients_;
+
+  // The last client of the ready-client prefix -- the first eager_preconnect_floor ready clients,
+  // over which new streams are spread round-robin. `nullptr` when the prefix is empty or the floor
+  // is 0 (round-robin disabled). Maintained as clients enter and leave `ready_clients_`; see the
+  // prefix helpers in the .cc.
+  ActiveClient* ready_prefix_tail_{nullptr};
 
   // Clients that are not ready to handle additional streams due to being Busy or Draining.
   std::list<ActiveClientPtr> busy_clients_;

@@ -264,6 +264,94 @@ public:
   bool clients_support_early_data_{false};
 };
 
+// With an eager_preconnect_floor, streams round-robin over the ready-client prefix instead of
+// piling onto the front one (the LIFO default). Two connections are kept ready via a high
+// concurrency limit; repeated attaches spread evenly between them. The debug invariant check for
+// the ready-client prefix runs on every add and rotation.
+TEST_F(ConnPoolImplBaseTest, RoundRobinOverReadyPrefix) {
+  EXPECT_CALL(dispatcher_, createTimer_(_)).Times(AnyNumber());
+  EXPECT_CALL(pool_, instantiateActiveClient).Times(AnyNumber());
+  EXPECT_CALL(pool_, onPoolReady).Times(AnyNumber());
+  concurrent_streams_ = 100; // Connections stay Ready after a stream attaches.
+  ON_CALL(*cluster_, eagerPreconnectFloor).WillByDefault(Return(2));
+
+  // The floor primes two connections on the first request; connect both so both are Ready.
+  pool_.newStreamImpl(context_, /*can_send_early_data=*/false);
+  ASSERT_EQ(2, clients_.size());
+  clients_[0]->onEvent(Network::ConnectionEvent::Connected);
+  clients_[1]->onEvent(Network::ConnectionEvent::Connected);
+
+  // Attach a batch of streams; round-robin alternates between the two ready connections.
+  for (int i = 0; i < 8; ++i) {
+    pool_.newStreamImpl(context_, /*can_send_early_data=*/false);
+  }
+  ASSERT_EQ(2, clients_.size()); // No new connections were created.
+  const uint32_t s0 = clients_[0]->active_streams_;
+  const uint32_t s1 = clients_[1]->active_streams_;
+  EXPECT_GT(s0, 0u);
+  EXPECT_GT(s1, 0u);
+  EXPECT_TRUE(s0 == s1 || s0 == s1 + 1 || s1 == s0 + 1);
+
+  // Complete all streams and drain so the pool is idle for teardown.
+  for (auto* c : clients_) {
+    const uint32_t n = c->active_streams_;
+    c->active_streams_ = 0;
+    for (uint32_t i = 0; i < n; ++i) {
+      pool_.onStreamClosed(*c, false);
+    }
+  }
+  pool_.drainConnectionsImpl(Envoy::ConnectionPool::DrainBehavior::DrainAndDelete);
+  dispatcher_.clearDeferredDeleteList();
+}
+
+// When there are more ready clients than the floor N, only the first N -- the ready-client prefix
+// -- are round-robined over; ready clients past the prefix are never selected. Here N = 2 but four
+// connections are made ready; every stream lands on the two most-recently-ready clients (the
+// prefix) and the other two receive nothing.
+TEST_F(ConnPoolImplBaseTest, RoundRobinOnlyCoversReadyPrefix) {
+  EXPECT_CALL(dispatcher_, createTimer_(_)).Times(AnyNumber());
+  EXPECT_CALL(pool_, instantiateActiveClient).Times(AnyNumber());
+  EXPECT_CALL(pool_, onPoolReady).Times(AnyNumber());
+  concurrent_streams_ = 100; // Connections stay Ready after streams attach.
+  ON_CALL(*cluster_, eagerPreconnectFloor).WillByDefault(Return(2));
+
+  // Preconnect four connections -- more than the floor of two -- using a large ratio so creation
+  // continues past the floor, then connect them all.
+  while (clients_.size() < 4) {
+    ASSERT_TRUE(pool_.maybePreconnectImpl(1e9));
+  }
+  ASSERT_EQ(4, clients_.size());
+  for (auto* c : clients_) {
+    c->onEvent(Network::ConnectionEvent::Connected);
+  }
+
+  // Clients became Ready in index order and each is prepended, so ready_clients_ is [3, 2, 1, 0]
+  // (MRU front). With N = 2 the prefix is {clients_[3], clients_[2]}; clients_[1] and clients_[0]
+  // sit past it and must never be selected.
+  for (int i = 0; i < 12; ++i) {
+    pool_.newStreamImpl(context_, /*can_send_early_data=*/false);
+  }
+  ASSERT_EQ(4, clients_.size()); // No new connections were created.
+
+  EXPECT_EQ(0u, clients_[0]->active_streams_);
+  EXPECT_EQ(0u, clients_[1]->active_streams_);
+  const uint32_t s2 = clients_[2]->active_streams_;
+  const uint32_t s3 = clients_[3]->active_streams_;
+  EXPECT_EQ(12u, s2 + s3);                               // All streams stayed within the prefix.
+  EXPECT_TRUE(s2 == s3 || s2 == s3 + 1 || s3 == s2 + 1); // ...and spread evenly across it.
+
+  // Complete all streams and drain so the pool is idle for teardown.
+  for (auto* c : clients_) {
+    const uint32_t n = c->active_streams_;
+    c->active_streams_ = 0;
+    for (uint32_t i = 0; i < n; ++i) {
+      pool_.onStreamClosed(*c, false);
+    }
+  }
+  pool_.drainConnectionsImpl(Envoy::ConnectionPool::DrainBehavior::DrainAndDelete);
+  dispatcher_.clearDeferredDeleteList();
+}
+
 TEST_F(ConnPoolImplBaseTest, DumpState) {
   std::stringstream out;
   pool_.dumpState(out, 0);

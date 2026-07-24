@@ -1,5 +1,7 @@
 #include "source/common/conn_pool/conn_pool_base.h"
 
+#include <iterator>
+
 #include "envoy/server/overload/load_shed_point.h"
 
 #include "source/common/common/assert.h"
@@ -20,6 +22,107 @@ int64_t currentUnusedCapacity(const std::list<ActiveClientPtr>& connecting_clien
     ret += client->currentUnusedCapacity();
   }
   return ret;
+}
+
+// The "ready client prefix" is the first `prefix_limit` (= eager preconnect floor) elements of
+// `ready_clients_`, over which new streams are spread round-robin. `prefix_tail` points at the
+// last element of that prefix, or is nullptr when the prefix is empty or the floor is 0. Each
+// member's `in_ready_prefix_` flag marks it as part of the prefix. The helpers below maintain that
+// state; the tail is tracked as an `ActiveClient*` and its `entry()` yields the list iterator when
+// needed.
+
+// Debug-only: verify the flags and `prefix_tail` match the first min(size, prefix_limit) elements.
+void checkReadyPrefixInvariant([[maybe_unused]] const std::list<ActiveClientPtr>& ready_clients,
+                               [[maybe_unused]] ActiveClient* prefix_tail,
+                               [[maybe_unused]] uint32_t prefix_limit) {
+#ifndef NDEBUG
+  if (prefix_limit == 0) {
+    return;
+  }
+  if (ready_clients.empty()) {
+    ASSERT(prefix_tail == nullptr);
+    return;
+  }
+  const size_t prefix_size = std::min<size_t>(ready_clients.size(), prefix_limit);
+  size_t position = 0;
+  ActiveClient* tail_expected = nullptr;
+  for (auto it = ready_clients.begin(); it != ready_clients.end(); ++it, ++position) {
+    ASSERT((*it)->in_ready_prefix_ == (position < prefix_size));
+    if (position == prefix_size - 1) {
+      tail_expected = it->get();
+    }
+  }
+  ASSERT(prefix_tail == tail_expected);
+#endif
+}
+
+// Fold `client` -- which must be the front of `ready_clients` (just prepended) -- into the prefix.
+// No-op when the floor is 0.
+void addToReadyPrefix(std::list<ActiveClientPtr>& ready_clients, ActiveClient*& prefix_tail,
+                      uint32_t prefix_limit, ActiveClient& client) {
+  if (prefix_limit == 0) {
+    return; // Round-robin disabled; the prefix is unused.
+  }
+  ASSERT(&client == ready_clients.front().get());
+  client.in_ready_prefix_ = true;
+  if (ready_clients.size() <= prefix_limit) {
+    // The whole list fits in the prefix. `client` joined it; the tail is unchanged unless the list
+    // was previously empty.
+    if (ready_clients.size() == 1) {
+      prefix_tail = &client;
+    }
+  } else {
+    // The prefix was full: prepending `client` pushes the current tail out of it. The tail's list
+    // predecessor becomes the new tail.
+    ActiveClient& evicted = *prefix_tail;
+    prefix_tail = std::prev(evicted.entry())->get();
+    evicted.in_ready_prefix_ = false;
+  }
+  checkReadyPrefixInvariant(ready_clients, prefix_tail, prefix_limit);
+}
+
+// Update the prefix before `client` leaves `ready_clients` (it is still in the list). No-op when
+// the floor is 0 or `client` is not in the prefix.
+void removeFromReadyPrefix(std::list<ActiveClientPtr>& ready_clients, ActiveClient*& prefix_tail,
+                           uint32_t prefix_limit, ActiveClient& client) {
+  if (prefix_limit == 0 || !client.in_ready_prefix_) {
+    return; // Disabled, or `client` is past the prefix -- its removal does not change it.
+  }
+  client.in_ready_prefix_ = false;
+  // `client` is still in `ready_clients`; `prefix_tail` is the current last prefix element.
+  const auto after_prefix = std::next(prefix_tail->entry());
+  if (after_prefix != ready_clients.end()) {
+    // Promote the element just past the prefix so it stays full once `client` leaves.
+    (*after_prefix)->in_ready_prefix_ = true;
+    prefix_tail = after_prefix->get();
+  } else if (ready_clients.size() == 1) {
+    // `client` is the only ready client; the prefix becomes empty.
+    prefix_tail = nullptr;
+  } else if (&client == prefix_tail) {
+    // Nothing to promote and `client` was the tail: its predecessor becomes the new tail.
+    prefix_tail = std::prev(client.entry())->get();
+  }
+  // else: nothing to promote and `client` was a non-tail member; the tail is unchanged.
+  // No invariant check here: mid-operation `client` is still in the list, so the prefix is a proper
+  // prefix again only once the caller removes it.
+}
+
+// Round-robin: move the front ready client (about to be used) to the tail of the prefix, so the
+// next attach picks a different one. Membership is unchanged; only the order within the prefix and
+// `prefix_tail` rotate. No-op when the floor is 0 or the prefix has fewer than two clients.
+void rotateReadyPrefix(std::list<ActiveClientPtr>& ready_clients, ActiveClient*& prefix_tail,
+                       uint32_t prefix_limit) {
+  if (prefix_limit == 0 || ready_clients.size() <= 1) {
+    return; // Disabled or nothing to rotate.
+  }
+  const auto front = ready_clients.begin();
+  if (front->get() == prefix_tail) {
+    return; // Only one client in the prefix (limit == 1); nothing to rotate.
+  }
+  // Splice the front to just after the current tail, making it the new tail.
+  ready_clients.splice(std::next(prefix_tail->entry()), ready_clients, front);
+  prefix_tail = front->get(); // `front` still refers to the moved element, now at the tail.
+  checkReadyPrefixInvariant(ready_clients, prefix_tail, prefix_limit);
 }
 } // namespace
 
@@ -355,6 +458,9 @@ ConnectionPool::Cancellable* ConnPoolImplBase::newStreamImpl(AttachContext& cont
   if (!ready_clients_.empty()) {
     ActiveClient& client = *ready_clients_.front();
     ENVOY_CONN_LOG(debug, "using existing fully connected connection", client);
+    // Round-robin over the ready-client prefix so the next attach uses a different connection.
+    // `client` refers to the object, which is unaffected by the reorder.
+    rotateReadyPrefix(ready_clients_, ready_prefix_tail_, effectiveEagerPreconnectFloor());
     attachStreamToClient(client, context);
     // Even if there's a ready client, we may want to preconnect to handle the next incoming stream.
     tryCreateNewConnections();
@@ -462,15 +568,17 @@ void ConnPoolImplBase::scheduleOnUpstreamReady() {
 
 void ConnPoolImplBase::onUpstreamReady() {
   while (!pending_streams_.empty() && !ready_clients_.empty()) {
-    ActiveClientPtr& client = ready_clients_.front();
-    ENVOY_CONN_LOG(debug, "attaching to next stream", *client);
+    ActiveClient& client = *ready_clients_.front();
+    ENVOY_CONN_LOG(debug, "attaching to next stream", client);
+    // Round-robin over the ready-client prefix (see rotateReadyPrefix).
+    rotateReadyPrefix(ready_clients_, ready_prefix_tail_, effectiveEagerPreconnectFloor());
     // Pending streams are pushed onto the front, so pull from the back.
     if (Runtime::runtimeFeatureEnabled("envoy.reloadable_features.conn_pool_fix_reentrancy")) {
       PendingStreamPtr pending_stream = pending_streams_.back()->removeFromList(pending_streams_);
       cluster_connectivity_state_.decrPendingStreams(1);
-      attachStreamToClient(*client, pending_stream->context());
+      attachStreamToClient(client, pending_stream->context());
     } else {
-      attachStreamToClient(*client, pending_streams_.back()->context());
+      attachStreamToClient(client, pending_streams_.back()->context());
       cluster_connectivity_state_.decrPendingStreams(1);
       pending_streams_.pop_back();
     }
@@ -499,7 +607,16 @@ std::list<ActiveClientPtr>& ConnPoolImplBase::owningList(ActiveClient::State sta
 
 void ConnPoolImplBase::transitionActiveClientState(ActiveClient& client,
                                                    ActiveClient::State new_state) {
-  auto& old_list = owningList(client.state());
+  const ActiveClient::State old_state = client.state();
+  const uint32_t prefix_limit = effectiveEagerPreconnectFloor();
+
+  // Update the ready-client prefix before the client leaves `ready_clients_`, while its list
+  // neighbors are still reachable.
+  if (old_state == ActiveClient::State::Ready && new_state != ActiveClient::State::Ready) {
+    removeFromReadyPrefix(ready_clients_, ready_prefix_tail_, prefix_limit, client);
+  }
+
+  auto& old_list = owningList(old_state);
   auto& new_list = owningList(new_state);
   client.setState(new_state);
 
@@ -510,6 +627,12 @@ void ConnPoolImplBase::transitionActiveClientState(ActiveClient& client,
   // since it is a no-op anyways.
   if (&old_list != &new_list) {
     client.moveBetweenLists(old_list, new_list);
+  }
+
+  // `moveBetweenLists` prepends to the destination, so a client entering Ready is now the front of
+  // `ready_clients_`; fold it into the ready-client prefix after the move.
+  if (old_state != ActiveClient::State::Ready && new_state == ActiveClient::State::Ready) {
+    addToReadyPrefix(ready_clients_, ready_prefix_tail_, prefix_limit, client);
   }
 }
 
@@ -696,6 +819,10 @@ void ConnPoolImplBase::onConnectionEvent(ActiveClient& client, absl::string_view
       client.connection_duration_timer_.reset();
     }
 
+    // A Ready client closing here bypasses transitionActiveClientState; update the ready-client
+    // prefix before it leaves `ready_clients_` (no-op if it wasn't a prefix member).
+    removeFromReadyPrefix(ready_clients_, ready_prefix_tail_, effectiveEagerPreconnectFloor(),
+                          client);
     dispatcher_.deferredDelete(client.removeFromList(owningList(client.state())));
 
     // Maintain eager preconnect floor, if enabled.

@@ -1,8 +1,11 @@
 #pragma once
 
+#include <chrono>
 #include <string>
+#include <utility>
 #include <vector>
 
+#include "envoy/common/time.h"
 #include "envoy/config/cluster/v3/cluster.pb.h"
 #include "envoy/config/cluster/v3/cluster.pb.validate.h"
 #include "envoy/config/core/v3/config_source.pb.h"
@@ -40,7 +43,10 @@ public:
          OptRef<xds::core::v3::ResourceLocator> odcds_resources_locator,
          Config::XdsManager& xds_manager, ClusterManager& cm, MissingClusterNotifier& notifier,
          Stats::Scope& scope, ProtobufMessage::ValidationVisitor& validation_visitor,
-         Server::Configuration::ServerFactoryContext& server_factory_context);
+         Server::Configuration::ServerFactoryContext& server_factory_context,
+         std::chrono::milliseconds cluster_idle_timeout);
+
+  ~OdCdsApiImpl() override;
 
   // Upstream::OdCdsApi
   void updateOnDemand(std::string cluster_name) override;
@@ -59,16 +65,22 @@ private:
                OptRef<xds::core::v3::ResourceLocator> odcds_resources_locator,
                Config::XdsManager& xds_manager, ClusterManager& cm,
                MissingClusterNotifier& notifier, Stats::Scope& scope,
-               ProtobufMessage::ValidationVisitor& validation_visitor,
-               absl::Status& creation_status);
+               ProtobufMessage::ValidationVisitor& validation_visitor, TimeSource& time_source,
+               std::chrono::milliseconds cluster_idle_timeout, absl::Status& creation_status);
   void sendAwaiting();
 
+  ClusterManager& cm_;
+  TimeSource& time_source_;
   CdsApiHelper helper_;
   MissingClusterNotifier& notifier_;
   Stats::ScopeSharedPtr scope_;
   StartStatus status_{StartStatus::NotStarted};
   absl::flat_hash_set<std::string> awaiting_names_;
+  absl::flat_hash_set<std::string> subscribed_clusters_;
   const Config::ResourceTypeHelper<envoy::config::cluster::v3::Cluster> resource_type_helper_;
+  // Idle timeout applied, as a cluster-manager eviction policy, to clusters this API discovers.
+  // From OnDemandCds.cluster_idle_timeout; zero disables reclamation.
+  const std::chrono::milliseconds cluster_idle_timeout_;
   Config::SubscriptionPtr subscription_;
 };
 
@@ -82,7 +94,8 @@ public:
   create(const envoy::config::core::v3::ConfigSource&, OptRef<xds::core::v3::ResourceLocator>,
          Config::XdsManager& xds_manager, ClusterManager& cm, MissingClusterNotifier& notifier,
          Stats::Scope& scope, ProtobufMessage::ValidationVisitor& validation_visitor,
-         Server::Configuration::ServerFactoryContext& server_factory_context);
+         Server::Configuration::ServerFactoryContext& server_factory_context,
+         std::chrono::milliseconds cluster_idle_timeout);
 
   // Upstream::OdCdsApi
   void updateOnDemand(std::string cluster_name) override;
@@ -95,7 +108,7 @@ private:
                     MissingClusterNotifier& notifier, Stats::Scope& scope,
                     Server::Configuration::ServerFactoryContext& server_context, bool old_ads,
                     ProtobufMessage::ValidationVisitor& validation_visitor,
-                    absl::Status& creation_status);
+                    std::chrono::milliseconds cluster_idle_timeout, absl::Status& creation_status);
 
   // Fetches, and potentially creates, the singleton subscriptions manager.
   // The arguments will be passed to the subscriptions manager's constructor, if
@@ -108,8 +121,19 @@ private:
 
   // A singleton through which all subscriptions will be processed.
   XdstpOdcdsSubscriptionsManagerSharedPtr subscriptions_manager_;
+  // Idle timeout applied to clusters this filter discovers.
+  const std::chrono::milliseconds cluster_idle_timeout_;
   const bool old_ads_;
 };
+
+// Binds a trailing cluster idle timeout onto an ODCDS create() so the result matches
+// ClusterManager::OdCdsCreationFunction, whose signature omits the timeout.
+template <typename CreateFn>
+auto withClusterIdleTimeout(CreateFn create_fn, std::chrono::milliseconds cluster_idle_timeout) {
+  return [create_fn, cluster_idle_timeout](auto&&... args) {
+    return create_fn(std::forward<decltype(args)>(args)..., cluster_idle_timeout);
+  };
+}
 
 } // namespace Upstream
 } // namespace Envoy

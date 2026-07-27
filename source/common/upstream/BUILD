@@ -51,10 +51,12 @@ envoy_cc_library(
     hdrs = ["od_cds_api_impl.h"],
     deps = [
         ":cds_api_helper_lib",
+        "//envoy/common:time_interface",
         "//envoy/config:subscription_interface",
         "//envoy/protobuf:message_validator_interface",
         "//envoy/stats:stats_interface",
         "//envoy/upstream:cluster_manager_interface",
+        "//envoy/upstream:upstream_interface",
         "//source/common/common:minimal_logger_lib",
         "//source/common/config:resource_type_helper_lib",
         "//source/common/grpc:common_lib",

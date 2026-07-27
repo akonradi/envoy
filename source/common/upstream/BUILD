@@ -76,6 +76,16 @@ envoy_cc_library(
 )
 
 envoy_cc_library(
+    name = "cluster_eviction_lib",
+    srcs = ["cluster_eviction.cc"],
+    hdrs = ["cluster_eviction.h"],
+    deps = [
+        "//envoy/event:dispatcher_interface",
+        "//source/common/common:minimal_logger_lib",
+    ],
+)
+
+envoy_cc_library(
     name = "cluster_manager_lib",
     srcs = ["cluster_manager_impl.cc"],
     hdrs = ["cluster_manager_impl.h"],
@@ -83,6 +93,7 @@ envoy_cc_library(
     deps = [
         ":cds_api_lib",
         ":cluster_discovery_manager_lib",
+        ":cluster_eviction_lib",
         ":host_utility_lib",
         ":load_balancer_context_base_lib",
         ":load_stats_reporter_lib",

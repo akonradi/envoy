@@ -38,6 +38,7 @@
 #include "source/common/quic/quic_stat_names.h"
 #include "source/common/tcp/async_tcp_client_impl.h"
 #include "source/common/upstream/cluster_discovery_manager.h"
+#include "source/common/upstream/cluster_eviction.h"
 #include "source/common/upstream/host_utility.h"
 #include "source/common/upstream/priority_conn_pool_map.h"
 #include "source/common/upstream/upstream_impl.h"
@@ -313,6 +314,9 @@ public:
   ThreadLocalCluster* getThreadLocalCluster(absl::string_view cluster) override;
 
   bool removeCluster(absl::string_view cluster, const bool remove_ignored = false) override;
+  void setClusterEvictionPolicy(absl::string_view cluster, std::chrono::milliseconds check_interval,
+                                std::function<bool(absl::string_view)> should_evict,
+                                std::function<void(absl::string_view)> on_evicted = nullptr) override;
   void shutdown() override {
     shutdown_ = true;
     if (resume_cds_ != nullptr) {
@@ -981,6 +985,10 @@ private:
   bool initialized_{};
   bool ads_mux_initialized_{};
   std::atomic<bool> shutdown_;
+
+  // Lazily constructed on the first setClusterEvictionPolicy() call; drives caller-policy-based
+  // removal of clusters. Null until a policy is set.
+  ClusterEvictionManagerPtr cluster_eviction_manager_;
 
   // Keep all the ClusterMaps at the end, so that they get destroyed first.
   // Clusters may keep references to the cluster manager and in destructor can call

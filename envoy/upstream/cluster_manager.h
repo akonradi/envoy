@@ -420,6 +420,29 @@ public:
   virtual bool removeCluster(absl::string_view cluster, const bool remove_ignored = false) PURE;
 
   /**
+   * Sets, or refreshes, an eviction policy for a previously added cluster. The `should_evict`
+   * callback is invoked with the cluster name at least every `check_interval`, and when it returns
+   `true` the cluster is removed and `on_evicted` is invoked with the cluster name.
+   *
+   * Only clusters added via `addOrUpdateCluster()` are eligible; a policy set for an unknown
+   * cluster simply never removes anything. A non-positive `check_interval` clears any existing
+   * policy for the cluster, as does removing the cluster for any other reason.
+   *
+   * Calling this again for the same cluster replaces the interval and callbacks. Must be called on
+   * the main thread.
+   *
+   * @param cluster is the name of the cluster to evict when should_evict returns true.
+   * @param check_interval bounds how long the cluster manager waits between evaluations;
+   *                       non-positive clears the policy.
+   * @param should_evict predicate evaluated on the main thread; a `true` return means evict now.
+   * @param on_evicted optional callback invoked on the main thread after an eviction removal.
+   */
+  virtual void setClusterEvictionPolicy(absl::string_view cluster,
+                                        std::chrono::milliseconds check_interval,
+                                        std::function<bool(absl::string_view)> should_evict,
+                                        std::function<void(absl::string_view)> on_evicted = nullptr) PURE;
+
+  /**
    * Shutdown the cluster manager prior to destroying connection pools and other thread local data.
    */
   virtual void shutdown() PURE;

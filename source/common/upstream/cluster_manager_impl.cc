@@ -858,9 +858,31 @@ bool ClusterManagerImpl::removeCluster(absl::string_view cluster_name, const boo
     updateClusterCounts();
     // Cancel any pending merged updates.
     updates_map_.erase(cluster_name);
+    // Drop any eviction policy for this cluster. When the eviction manager is the one triggering
+    // this removal it has already dropped the entry, so this is a no-op in that path.
+    if (cluster_eviction_manager_ != nullptr) {
+      cluster_eviction_manager_->clearPolicy(cluster_name);
+    }
   }
 
   return removed;
+}
+
+void ClusterManagerImpl::setClusterEvictionPolicy(absl::string_view cluster,
+                                                  std::chrono::milliseconds check_interval,
+                                                  std::function<bool(absl::string_view)> should_evict,
+                                                  std::function<void(absl::string_view)> on_evicted) {
+  if (cluster_eviction_manager_ == nullptr) {
+    if (check_interval <= std::chrono::milliseconds::zero()) {
+      // Nothing is tracked and this call disables eviction, so there is nothing to do. Avoid
+      // constructing the manager (and its sweep timer) until a cluster actually needs it.
+      return;
+    }
+    cluster_eviction_manager_ = std::make_unique<ClusterEvictionManager>(
+        dispatcher_, [this](absl::string_view cluster_name) { removeCluster(cluster_name, true); });
+  }
+  cluster_eviction_manager_->setPolicy(cluster, check_interval, std::move(should_evict),
+                                       std::move(on_evicted));
 }
 
 absl::StatusOr<ClusterManagerImpl::ClusterDataPtr>

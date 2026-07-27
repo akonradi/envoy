@@ -86,6 +86,16 @@ envoy_cc_test(
 )
 
 envoy_cc_test(
+    name = "cluster_eviction_test",
+    srcs = ["cluster_eviction_test.cc"],
+    rbe_pool = "6gig",
+    deps = [
+        "//source/common/upstream:cluster_eviction_lib",
+        "//test/mocks/event:event_mocks",
+    ],
+)
+
+envoy_cc_test(
     name = "deferred_cluster_initialization_test",
     srcs = ["deferred_cluster_initialization_test.cc"],
     rbe_pool = "6gig",

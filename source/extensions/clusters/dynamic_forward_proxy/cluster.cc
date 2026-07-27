@@ -86,19 +86,9 @@ Cluster::Cluster(
       sub_cluster_dns_config_(
           config.has_sub_clusters_config() && config.sub_clusters_config().has_dns_cluster_config()
               ? std::make_optional(config.sub_clusters_config().dns_cluster_config())
-              : std::nullopt) {
-
-  if (enable_sub_cluster_) {
-    idle_timer_ = main_thread_dispatcher_.createTimer([this]() { checkIdleSubCluster(); });
-    idle_timer_->enableTimer(sub_cluster_ttl_);
-  }
-}
+              : std::nullopt) {}
 
 Cluster::~Cluster() {
-  if (enable_sub_cluster_) {
-    idle_timer_->disableTimer();
-    idle_timer_.reset();
-  }
   if (cm_.isShutdown()) {
     return;
   }
@@ -140,23 +130,34 @@ bool Cluster::touch(const std::string& cluster_name) {
   return false;
 }
 
-void Cluster::checkIdleSubCluster() {
+void Cluster::registerSubClusterEvictionPolicy(absl::string_view cluster_name) {
   ASSERT(main_thread_dispatcher_.isThreadSafe());
+  std::shared_ptr<ClusterInfo> info;
   {
-    // TODO: try read lock first.
-    absl::WriterMutexLock lock{cluster_map_lock_};
-    for (auto it = cluster_map_.cbegin(); it != cluster_map_.cend();) {
-      if (it->second->checkIdle()) {
-        auto cluster_name = it->first;
-        ENVOY_LOG(debug, "cluster='{}' removing from cluster_map & cluster manager", cluster_name);
-        cluster_map_.erase(it++);
-        cm_.removeCluster(cluster_name, true);
-      } else {
-        ++it;
-      }
+    absl::ReaderMutexLock lock{cluster_map_lock_};
+    const auto it = cluster_map_.find(cluster_name);
+    if (it == cluster_map_.end()) {
+      // The sub-cluster was reaped between creation and this main-thread registration; nothing to
+      // register.
+      return;
     }
+    info = it->second;
   }
-  idle_timer_->enableTimer(sub_cluster_ttl_);
+  // Delegate the idle sweep to the cluster manager while keeping the DFP idle signal unchanged: the
+  // predicate is the same last-used-time TTL check the DFP idle timer used, and it is evaluated on
+  // the main thread every sub_cluster_ttl_. On eviction the cluster manager removes the sub-cluster
+  // and calls onSubClusterEvicted() to drop it from cluster_map_.
+  cm_.setClusterEvictionPolicy(
+      cluster_name, sub_cluster_ttl_, [info](absl::string_view) { return info->checkIdle(); },
+      [this](absl::string_view cluster_name) { onSubClusterEvicted(cluster_name); });
+}
+
+void Cluster::onSubClusterEvicted(absl::string_view cluster_name) {
+  ASSERT(main_thread_dispatcher_.isThreadSafe());
+  ENVOY_LOG(debug, "cluster='{}' evicted by cluster manager, removing from cluster_map",
+            cluster_name);
+  absl::WriterMutexLock lock{cluster_map_lock_};
+  cluster_map_.erase(cluster_name);
 }
 
 std::pair<bool, std::optional<envoy::config::cluster::v3::Cluster>>

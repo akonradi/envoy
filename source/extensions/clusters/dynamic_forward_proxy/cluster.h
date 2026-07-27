@@ -53,7 +53,7 @@ public:
   createSubClusterConfig(const std::string& cluster_name, const std::string& host,
                          const int port) override;
   bool touch(const std::string& cluster_name) override;
-  void checkIdleSubCluster();
+  void registerSubClusterEvictionPolicy(absl::string_view cluster_name) override;
   Upstream::HostConstSharedPtr findHostByName(const std::string& host) const;
 
 protected:
@@ -79,6 +79,10 @@ private:
   };
 
   using ClusterInfoMap = absl::flat_hash_map<std::string, std::shared_ptr<ClusterInfo>>;
+
+  // Erases a reaped sub-cluster from cluster_map_. Invoked by the cluster manager's eviction
+  // policy on the main thread, after it has already removed the sub-cluster for being idle.
+  void onSubClusterEvicted(absl::string_view cluster_name);
 
   struct HostInfo {
     HostInfo(const Extensions::Common::DynamicForwardProxy::DnsHostInfoSharedPtr& shared_host_info,
@@ -255,8 +259,6 @@ private:
   const LocalInfo::LocalInfo& local_info_;
   Event::Dispatcher& main_thread_dispatcher_;
   const envoy::config::cluster::v3::Cluster orig_cluster_config_;
-
-  Event::TimerPtr idle_timer_;
 
   // True if H2 and H3 connections may be reused across different origins.
   const bool allow_coalesced_connections_;

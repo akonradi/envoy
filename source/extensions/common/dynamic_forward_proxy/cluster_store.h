@@ -40,6 +40,13 @@ public:
    * @return true if the subCluster is existing.
    */
   virtual bool touch(const std::string& cluster_name) PURE;
+
+  /**
+   * Register the subCluster with the specified cluster_name with the cluster manager's eviction
+   * policy, which drives its idle removal. Must be called on the main thread, after the subCluster
+   * has been added to the cluster manager.
+   */
+  virtual void registerSubClusterEvictionPolicy(absl::string_view cluster_name) PURE;
 };
 
 using DfpClusterSharedPtr = std::shared_ptr<DfpCluster>;

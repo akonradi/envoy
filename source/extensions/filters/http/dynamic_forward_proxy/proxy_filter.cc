@@ -109,21 +109,31 @@ LoadClusterEntryHandlePtr ProxyFilterConfig::addDynamicCluster(
   }
 
   if (sub_cluster_pair.second.has_value()) {
-    auto cluster = sub_cluster_pair.second.value();
+    auto sub_cluster_config = sub_cluster_pair.second.value();
     // TODO: a meaningful version_info.
     std::string version_info = "";
     ENVOY_LOG(debug, "deliver dynamic cluster {} creation to main thread", cluster_name);
-    main_thread_dispatcher_.post([this, cluster, version_info]() {
-      ENVOY_LOG(debug, "initializing dynamic cluster {} creation in main thread", cluster.name());
+    // Capture the DFP cluster (a shared_ptr) so it outlives this posted task, and the sub-cluster
+    // name so the task can register its eviction policy once the sub-cluster has been added.
+    std::string sub_cluster_name = cluster_name;
+    main_thread_dispatcher_.post(
+        [this, cluster, sub_cluster_config, version_info, sub_cluster_name]() {
+          ENVOY_LOG(debug, "initializing dynamic cluster {} creation in main thread",
+                    sub_cluster_config.name());
 
-      // Set avoid_cds_removal to true to prevent the cluster from being removed during a CDS
-      // update. As this cluster lifecycle is managed by DFP cluster, it should not be removed by
-      // CDS. https://github.com/envoyproxy/envoy/issues/35171
-      absl::Status status =
-          cluster_manager_.addOrUpdateCluster(cluster, version_info, true).status();
-      ENVOY_BUG(status.ok(),
-                absl::StrCat("Failed to update DFP cluster due to ", status.message()));
-    });
+          // Set avoid_cds_removal to true to prevent the cluster from being removed during a CDS
+          // update. As this cluster lifecycle is managed by DFP cluster, it should not be removed
+          // by CDS. https://github.com/envoyproxy/envoy/issues/35171
+          absl::Status status =
+              cluster_manager_.addOrUpdateCluster(sub_cluster_config, version_info, true).status();
+          ENVOY_BUG(status.ok(),
+                    absl::StrCat("Failed to update DFP cluster due to ", status.message()));
+          if (status.ok()) {
+            // Hand the sub-cluster's idle lifecycle to the cluster manager's eviction policy now
+            // that it has been added, on the main thread and after the add.
+            cluster->registerSubClusterEvictionPolicy(sub_cluster_name);
+          }
+        });
   } else {
     ENVOY_LOG(debug, "cluster='{}' already created, waiting it warming", cluster_name);
   }

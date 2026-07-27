@@ -139,6 +139,7 @@ public:
   MOCK_METHOD((std::pair<bool, std::optional<envoy::config::cluster::v3::Cluster>>),
               createSubClusterConfig, (const std::string&, const std::string&, const int));
   MOCK_METHOD(bool, touch, (const std::string&));
+  MOCK_METHOD(void, registerSubClusterEvictionPolicy, (const absl::string_view));
 };
 
 } // namespace DynamicForwardProxy
